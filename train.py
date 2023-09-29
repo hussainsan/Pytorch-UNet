@@ -19,10 +19,15 @@ from unet import UNet
 from utils.data_loading import BasicDataset, CarvanaDataset
 from utils.dice_score import dice_loss
 
-dir_img = Path('./data/imgs/')
-dir_mask = Path('./data/masks/')
+# dir_img = Path('./data/imgs/')
+# dir_mask = Path('./data/masks/')
+dir_img = Path('./data/train_true_color/')
+dir_mask = Path('./data/train_mask/')
 dir_checkpoint = Path('./checkpoints/')
-
+# import os
+# from os import listdir
+# all_files = [file for file in listdir(dir_img)]
+# print(f"All files in the directory: {all_files}")
 
 def train_model(
         model,
@@ -159,10 +164,16 @@ def train_model(
                             pass
 
         if save_checkpoint:
-            Path(dir_checkpoint).mkdir(parents=True, exist_ok=True)
+            # Path(dir_checkpoint).mkdir(parents=True, exist_ok=True)
+            # state_dict = model.state_dict()
+            # state_dict['mask_values'] = dataset.mask_values
+            # torch.save(state_dict, str(dir_checkpoint / 'checkpoint_epoch{}.pth'.format(epoch)))
+            # logging.info(f'Checkpoint {epoch} saved!')
+            
+            dir_checkpoint.mkdir(parents=True, exist_ok=True)
             state_dict = model.state_dict()
-            state_dict['mask_values'] = dataset.mask_values
-            torch.save(state_dict, str(dir_checkpoint / 'checkpoint_epoch{}.pth'.format(epoch)))
+            checkpoint_file = dir_checkpoint / 'checkpoint_epoch_{}.pth'.format(epoch)
+            torch.save(state_dict, str(checkpoint_file))
             logging.info(f'Checkpoint {epoch} saved!')
 
 

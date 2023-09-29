@@ -11,7 +11,25 @@ from os.path import splitext, isfile, join
 from pathlib import Path
 from torch.utils.data import Dataset
 from tqdm import tqdm
+import tifffile
+import numpy as np
+from os.path import splitext
 
+
+
+# def load_image(filename):
+#     ext = splitext(filename)[1]
+#     if ext == '.npy':
+#         return Image.fromarray(np.load(filename))
+#     elif ext in ['.pt', '.pth']:
+#         return Image.fromarray(torch.load(filename).numpy())
+#     else:
+#         return Image.open(filename)
+from os.path import splitext
+from PIL import Image
+import numpy as np
+import torch
+import tifffile  # Make sure you have this package installed
 
 def load_image(filename):
     ext = splitext(filename)[1]
@@ -19,12 +37,28 @@ def load_image(filename):
         return Image.fromarray(np.load(filename))
     elif ext in ['.pt', '.pth']:
         return Image.fromarray(torch.load(filename).numpy())
+    elif ext == '.tif' or ext == '.tiff':  # Handling both common extensions for TIFF files
+        print("Loading tiff file:", filename)
+        img_array = tifffile.imread(filename).astype(np.float32)
+        if len(img_array.shape) == 3 and img_array.shape[2] == 3:
+            return Image.fromarray((img_array * 255).astype(np.uint8), 'RGB')
+        return Image.fromarray(img_array)
     else:
         return Image.open(filename)
 
 
+
 def unique_mask_values(idx, mask_dir, mask_suffix):
-    mask_file = list(mask_dir.glob(idx + mask_suffix + '.*'))[0]
+    
+    from os import listdir
+    # print("Files in directory:", os.listdir(mask_dir))
+    # Updated the pattern to match 'train_mask_x.tif'
+    matching_files = list(mask_dir.glob(f"train_mask_{idx}.tif"))
+    # print("Matching files:", matching_files)
+    # Check if matching_files is empty and raise an error if it is
+    if not matching_files:
+        raise ValueError(f"No mask files found for index: {idx} in directory {mask_dir}")
+    mask_file = matching_files[0]
     mask = np.asarray(load_image(mask_file))
     if mask.ndim == 2:
         return np.unique(mask)
@@ -37,18 +71,23 @@ def unique_mask_values(idx, mask_dir, mask_suffix):
 
 class BasicDataset(Dataset):
     def __init__(self, images_dir: str, mask_dir: str, scale: float = 1.0, mask_suffix: str = ''):
+        # print("images_dir lisss",listdir(images_dir))
         self.images_dir = Path(images_dir)
         self.mask_dir = Path(mask_dir)
         assert 0 < scale <= 1, 'Scale must be between 0 and 1'
         self.scale = scale
         self.mask_suffix = mask_suffix
+        # print("hereee: ", self.images_dir.glob('train_color_true_1.tif'))
+        
+        # self.ids = [file.stem.replace("train_color_true_", "") for file in self.images_dir.glob('train_color_true_*.tif')]
+        self.ids = [splitext(file)[0].replace("train_true_color_", "") for file in listdir(images_dir) if isfile(join(images_dir, file)) and file.startswith('train_true_color_') and file.endswith('.tif')]
 
-        self.ids = [splitext(file)[0] for file in listdir(images_dir) if isfile(join(images_dir, file)) and not file.startswith('.')]
         if not self.ids:
             raise RuntimeError(f'No input file found in {images_dir}, make sure you put your images there')
 
         logging.info(f'Creating dataset with {len(self.ids)} examples')
         logging.info('Scanning mask files to determine unique values')
+
         with Pool() as p:
             unique = list(tqdm(
                 p.imap(partial(unique_mask_values, mask_dir=self.mask_dir, mask_suffix=self.mask_suffix), self.ids),
@@ -65,7 +104,6 @@ class BasicDataset(Dataset):
     def preprocess(mask_values, pil_img, scale, is_mask):
         w, h = pil_img.size
         newW, newH = int(scale * w), int(scale * h)
-        assert newW > 0 and newH > 0, 'Scale is too small, resized images would have no pixel'
         pil_img = pil_img.resize((newW, newH), resample=Image.NEAREST if is_mask else Image.BICUBIC)
         img = np.asarray(pil_img)
 
@@ -76,9 +114,7 @@ class BasicDataset(Dataset):
                     mask[img == v] = i
                 else:
                     mask[(img == v).all(-1)] = i
-
             return mask
-
         else:
             if img.ndim == 2:
                 img = img[np.newaxis, ...]
@@ -87,21 +123,20 @@ class BasicDataset(Dataset):
 
             if (img > 1).any():
                 img = img / 255.0
-
             return img
 
     def __getitem__(self, idx):
         name = self.ids[idx]
-        mask_file = list(self.mask_dir.glob(name + self.mask_suffix + '.*'))
-        img_file = list(self.images_dir.glob(name + '.*'))
+        mask_file = self.mask_dir / f"train_mask_{name}.tif"
+        img_file = self.images_dir / f"train_true_color_{name}.tif"
 
-        assert len(img_file) == 1, f'Either no image or multiple images found for the ID {name}: {img_file}'
-        assert len(mask_file) == 1, f'Either no mask or multiple masks found for the ID {name}: {mask_file}'
-        mask = load_image(mask_file[0])
-        img = load_image(img_file[0])
+        assert img_file.exists(), f'No image found for ID {name}: {img_file}'
+        assert mask_file.exists(), f'No mask found for ID {name}: {mask_file}'
 
-        assert img.size == mask.size, \
-            f'Image and mask {name} should be the same size, but are {img.size} and {mask.size}'
+        mask = load_image(mask_file)
+        img = load_image(img_file)
+
+        assert img.size == mask.size, f'Image and mask {name} should be the same size, but are {img.size} and {mask.size}'
 
         img = self.preprocess(self.mask_values, img, self.scale, is_mask=False)
         mask = self.preprocess(self.mask_values, mask, self.scale, is_mask=True)

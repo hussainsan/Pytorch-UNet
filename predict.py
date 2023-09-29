@@ -29,7 +29,7 @@ def predict_img(net,
             mask = output.argmax(dim=1)
         else:
             mask = torch.sigmoid(output) > out_threshold
-
+    
     return mask[0].long().squeeze().numpy()
 
 
@@ -69,7 +69,7 @@ def mask_to_image(mask: np.ndarray, mask_values):
 
     if mask.ndim == 3:
         mask = np.argmax(mask, axis=0)
-
+    print("Unique values in mask:", np.unique(mask))
     for i, v in enumerate(mask_values):
         out[mask == i] = v
 
@@ -81,6 +81,11 @@ if __name__ == '__main__':
     logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
 
     in_files = args.input
+    if os.path.isdir(args.input[0]):
+        in_files = [os.path.join(args.input[0], f) for f in os.listdir(args.input[0]) if f.endswith(('.tif', '.tiff'))]
+    else:
+        in_files = args.input
+
     out_files = get_output_filenames(args)
 
     net = UNet(n_channels=3, n_classes=args.classes, bilinear=args.bilinear)
@@ -96,22 +101,46 @@ if __name__ == '__main__':
 
     logging.info('Model loaded!')
 
+
+
+    logging.info(f"Number of input files found: {len(in_files)}")
+    logging.info(f"Detected file: {in_files[0]}")
+    import os
+
     for i, filename in enumerate(in_files):
-        logging.info(f'Predicting image {filename} ...')
-        img = Image.open(filename)
+        # Skip if the filename is a directory or if it doesn't have a .tif or .tiff extension
+        if not os.path.isfile(filename) or (not filename.endswith('.tif') and not filename.endswith('.tiff')):
+            continue
 
-        mask = predict_img(net=net,
-                           full_img=img,
-                           scale_factor=args.scale,
-                           out_threshold=args.mask_threshold,
-                           device=device)
+        # logging.info(f'Predicting image {filename} ...')
+        print(f"mask_values: {mask_values}")
+        
+        import tifffile
+        try:
+            img = tifffile.imread(filename).astype(np.float32)
+            
+            mask = predict_img(net=net,
+                            full_img=img,
+                            scale_factor=args.scale,
+                            out_threshold=args.mask_threshold,
+                            device=device)
+            # Further processing on mask if required
 
-        if not args.no_save:
-            out_filename = out_files[i]
-            result = mask_to_image(mask, mask_values)
-            result.save(out_filename)
-            logging.info(f'Mask saved to {out_filename}')
 
-        if args.viz:
-            logging.info(f'Visualizing results for image {filename}, close to continue...')
-            plot_img_and_mask(img, mask)
+            if not args.no_save:
+                out_filename = out_files[i]
+                print("mask shape:", mask.shape)
+                print("mask type:", type(mask))
+                result = mask_to_image(mask, mask_values)
+                
+                result.save(out_filename)
+                logging.info(f'Mask saved to {out_filename}')
+
+            if args.viz:
+                logging.info(f'Visualizing results for image {filename}, close to continue...')
+                plot_img_and_mask(img, mask)
+        
+        except Exception as e:
+            logging.error(f"An error occurred while processing {filename}: {e}")
+    
+    logging.info("Processing completed!")
